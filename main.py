@@ -2,6 +2,7 @@ import asyncio
 import json
 from typing import Set, Dict, List, Any
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect, Body
+from datetime import datetime
 from sqlalchemy import (
     create_engine,
     MetaData,
@@ -116,6 +117,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
 
 # Function to send data to subscribed users
 async def send_data_to_subscribers(user_id: int, data):
+    print("ID", user_id)
     if user_id in subscriptions:
         for websocket in subscriptions[user_id]:
             await websocket.send_json(json.dumps(data))
@@ -126,33 +128,37 @@ async def send_data_to_subscribers(user_id: int, data):
 @app.post("/processed_agent_data/")
 async def create_processed_agent_data(data: List[ProcessedAgentData]):
     # Insert data to database
-    # Send data to subscribers
+    # Send data to subscribers       
     db = SessionLocal()
-    try:
-        for item in data:
-            db_item = processed_agent_data.insert().values(
-                road_state=item.road_state,
-                user_id=item.agent_data.user_id,
-                x=item.agent_data.accelerometer.x,
-                y=item.agent_data.accelerometer.y,
-                z=item.agent_data.accelerometer.z,
-                latitude=item.agent_data.gps.latitude,
-                longitude=item.agent_data.gps.longitude,
-                timestamp=item.agent_data.timestamp,
-            )
-            db.execute(db_item)
-        db.commit()
-    finally:
-        db.close()
+    results = []
+    for item in data:
+        try:
+            insert_values = {
+                "road_state": item.road_state,
+                "user_id": item.agent_data.user_id,
+                "x": item.agent_data.accelerometer.x,
+                "y": item.agent_data.accelerometer.y,
+                "z": item.agent_data.accelerometer.z,
+                "latitude": item.agent_data.gps.latitude,
+                "longitude": item.agent_data.gps.longitude,
+                "timestamp": item.agent_data.timestamp.isoformat()
+            }
+            inserted = processed_agent_data.insert().values(insert_values)
+            db.execute(inserted)
+            db.commit()
+            results.append(insert_values)
+        except Exception as e:
+            db.rollback()
+            raise e
+        finally:
+            db.close()
     
     try:
-        await asyncio.gather(
-            *[send_data_to_subscribers(item.agent_data.user_id, item.dict()) for item in data]
-        )
+        await send_data_to_subscribers(data[0].agent_data.user_id, results)
     except Exception as e:
         print(f"Error sending data to subscribers: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error sending data to subscribers: {str(e)}")
-    
+
     return {"message": "Data successfully inserted and sent to subscribers"}
     #pass
 
@@ -215,7 +221,7 @@ def update_processed_agent_data(processed_agent_data_id: int, data: ProcessedAge
             "z": data.agent_data.accelerometer.z,
             "latitude": data.agent_data.gps.latitude,
             "longitude": data.agent_data.gps.longitude,
-            "timestamp": data.agent_data.timestamp,
+            "timestamp": data.agent_data.timestamp.isoformat(),
         }
 
         update_query = (
