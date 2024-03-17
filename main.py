@@ -117,7 +117,6 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
 
 # Function to send data to subscribed users
 async def send_data_to_subscribers(user_id: int, data):
-    print("ID", user_id)
     if user_id in subscriptions:
         for websocket in subscriptions[user_id]:
             await websocket.send_json(json.dumps(data))
